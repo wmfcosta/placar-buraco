@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Placar do Buraco</title>
+<meta name="theme-color" content="#1f5c45">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Buraco">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Placar do Buraco<span class="suits" aria-hidden="true">♠♥♣♦</span></h1>
+    <button class="btn-primary" id="newBtn">Nova partida</button>
+  </header>
+
+  <nav class="nav" role="tablist">
+    <a href="#placar" data-view="placar">Placar</a>
+    <a href="#historico" data-view="historico">Histórico</a>
+    <a href="#ranking" data-view="ranking">Ranking</a>
+  </nav>
+
+  <div id="toast" class="toast" hidden role="status"></div>
+
+  <!-- PLACAR -->
+  <main id="view-placar" class="view">
+    <div id="noGame" class="panel" hidden>
+      <h2>Nenhuma partida aberta neste celular</h2>
+      <p class="sub">Comece uma nova partida ou entre numa que já está em andamento.</p>
+      <ul class="list" id="openGames"></ul>
+      <button class="btn-primary" id="newBtn2">Nova partida</button>
+    </div>
+
+    <div id="gameArea" hidden>
+      <section class="table" id="board" aria-live="polite"></section>
+      <div id="winner" class="banner" hidden></div>
+
+      <section class="panel" id="entryPanel">
+        <div class="between">
+          <h2 id="roundTitle">Rodada 1</h2>
+          <span class="sub">Use − para pontos negativos</span>
+        </div>
+        <div class="entry">
+          <div class="field">
+            <span class="who" id="whoA"></span>
+            <div class="signrow">
+              <button id="signA" aria-pressed="false" aria-label="Negativo">−</button>
+              <input id="ptsA" inputmode="numeric" pattern="[0-9]*" placeholder="0" aria-label="Pontos da dupla 1">
+            </div>
+            <div class="chips" data-for="A"></div>
+          </div>
+          <div class="field">
+            <span class="who" id="whoB"></span>
+            <div class="signrow">
+              <button id="signB" aria-pressed="false" aria-label="Negativo">−</button>
+              <input id="ptsB" inputmode="numeric" pattern="[0-9]*" placeholder="0" aria-label="Pontos da dupla 2">
+            </div>
+            <div class="chips" data-for="B"></div>
+          </div>
+        </div>
+        <button id="calcBtn">Calcular pontos da rodada</button>
+        <div class="row">
+          <button class="btn-ghost" id="undoBtn">Desfazer última</button>
+          <button class="btn-primary" id="addBtn">Lançar rodada</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="between"><h2>Rodadas</h2><span class="sub live" id="liveTag">ao vivo</span></div>
+        <div class="scroll"><table class="hist" id="hist"></table></div>
+        <button class="btn-ghost btn-danger" id="cancelGame">Cancelar esta partida</button>
+      </section>
+    </div>
+  </main>
+
+  <!-- HISTÓRICO -->
+  <main id="view-historico" class="view" hidden>
+    <section class="panel">
+      <h2>Partidas</h2>
+      <ul class="list" id="historyList"><li class="empty">Carregando…</li></ul>
+    </section>
+  </main>
+
+  <!-- RANKING -->
+  <main id="view-ranking" class="view" hidden>
+    <section class="panel">
+      <div class="between"><h2>Jogadores</h2><span class="sub" id="rankCount"></span></div>
+      <div class="scroll"><table class="hist rank" id="rankPlayers"></table></div>
+    </section>
+    <section class="panel">
+      <h2>Duplas</h2>
+      <div class="scroll"><table class="hist rank" id="rankPairs"></table></div>
+    </section>
+  </main>
+</div>
+
+<!-- Nova partida -->
+<div class="sheet" id="setup" hidden role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+  <form class="card" id="setupForm">
+    <h2 id="setupTitle">Nova partida</h2>
+    <datalist id="knownPlayers"></datalist>
+    <div class="field">
+      <span class="label"><span class="dot" style="background:var(--a)"></span>Dupla 1</span>
+      <div class="pair"><input id="a1" list="knownPlayers" placeholder="Jogador 1" required maxlength="40"><input id="a2" list="knownPlayers" placeholder="Jogador 2" required maxlength="40"></div>
+    </div>
+    <div class="field">
+      <span class="label"><span class="dot" style="background:var(--b)"></span>Dupla 2</span>
+      <div class="pair"><input id="b1" list="knownPlayers" placeholder="Jogador 1" required maxlength="40"><input id="b2" list="knownPlayers" placeholder="Jogador 2" required maxlength="40"></div>
+    </div>
+    <div class="field">
+      <span class="label">Limite de pontos</span>
+      <div class="limits" id="limitChips"></div>
+      <input id="limit" inputmode="numeric" pattern="[0-9]*" required aria-label="Limite de pontos">
+    </div>
+    <div class="row">
+      <button type="button" class="btn-ghost" id="cancelSetup">Cancelar</button>
+      <button type="submit" class="btn-primary" id="startBtn">Começar</button>
+    </div>
+  </form>
+</div>
+
+<!-- Calculadora -->
+<div class="sheet" id="calc" hidden role="dialog" aria-modal="true" aria-labelledby="calcTitle">
+  <div class="card">
+    <h2 id="calcTitle">Calculadora da rodada</h2>
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tabA" aria-selected="true"></button>
+      <button role="tab" id="tabB" aria-selected="false"></button>
+    </div>
+    <div id="calcBody"></div>
+    <div class="calcTotal"><span id="calcWho"></span><span class="num" id="calcSum">0</span></div>
+    <div class="calcTotals">
+      <div><div class="who" id="ctA"></div><div class="v num" id="cvA">0</div></div>
+      <div><div class="who" id="ctB"></div><div class="v num" id="cvB">0</div></div>
+    </div>
+    <details>
+      <summary>Valores das regras</summary>
+      <div class="rules" id="rules"></div>
+      <p class="sub">Ajuste conforme as regras da sua mesa. Os valores ficam salvos neste celular.</p>
+    </details>
+    <div class="row">
+      <button class="btn-ghost" id="calcClose">Cancelar</button>
+      <button class="btn-primary" id="calcUse">Usar estes pontos</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirmação -->
+<div class="sheet" id="confirm" hidden role="dialog" aria-modal="true">
+  <div class="card">
+    <h2 id="confirmText"></h2>
+    <div class="row">
+      <button class="btn-ghost" id="confirmNo">Voltar</button>
+      <button class="btn-red" id="confirmYes">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="/config.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
