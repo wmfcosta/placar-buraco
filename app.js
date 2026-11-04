@@ -50,6 +50,7 @@ async function openGame(id) {
   ]);
   if (p.error || r.error) return fail(p.error || r.error);
   if (!p.data || p.data.status === 'cancelada') { LS.del('partidaId'); game = null; rounds = []; renderGame(); return; }
+  if (!game || game.id !== id) resetCalc();
   game = p.data; rounds = r.data;
   LS.set('partidaId', id);
   subscribe(id);
@@ -141,6 +142,7 @@ async function addRound() {
     }
     rounds.push(data);
     ['A', 'B'].forEach(t => { $('pts' + t).value = ''; $('sign' + t).setAttribute('aria-pressed', 'false'); });
+    resetCalc();
     await saveTotals();
     renderGame();
   } catch (e) { fail(e, 'Não foi possível lançar a rodada. Confira a internet e tente de novo.'); }
@@ -313,10 +315,23 @@ $('calcBody').addEventListener('input', e => { const n = e.target.dataset.n; if 
 $('tabA').onclick = () => { tab = 'A'; renderCalc(); }; $('tabB').onclick = () => { tab = 'B'; renderCalc(); };
 function renderRules() { $('rules').innerHTML = RULE_DEF.map(r => `<label>${r[1]}<input id="rule-${r[0]}" data-r="${r[0]}" inputmode="numeric" pattern="[0-9]*" value="${rules[r[0]]}"></label>`).join(''); }
 $('rules').addEventListener('input', e => { const k = e.target.dataset.r; if (!k) return; e.target.value = e.target.value.replace(/[^0-9]/g, ''); rules[k] = parseInt(e.target.value) || 0; LS.set('regras', rules); renderCalc(); });
-$('calcBtn').onclick = () => { calc = { A: blank(), B: blank() }; tab = 'A'; renderRules(); renderCalc(); $('calc').hidden = false; };
+// A calculadora guarda o que foi marcado para cada dupla até a rodada ser lançada,
+// e só escreve no campo da dupla que foi de fato preenchida nela.
+const touched = c => c.limpa || c.suja || c.real || c.batida || c.morto || c.mesa !== '' || c.mao !== '';
+function resetCalc() { calc = { A: blank(), B: blank() }; tab = 'A'; }
+$('calcBtn').onclick = () => {
+  if (!touched(calc.A) && !touched(calc.B)) tab = $('ptsA').value && !$('ptsB').value ? 'B' : 'A';
+  else if (touched(calc.A) && !touched(calc.B)) tab = 'B';
+  renderRules(); renderCalc(); $('calc').hidden = false;
+};
 $('calcClose').onclick = () => { $('calc').hidden = true; };
 $('calcUse').onclick = () => {
-  [['A', calcTotal(calc.A)], ['B', calcTotal(calc.B)]].forEach(([t, v]) => { $('pts' + t).value = v ? String(Math.abs(v)) : ''; $('sign' + t).setAttribute('aria-pressed', v < 0 ? 'true' : 'false'); });
+  ['A', 'B'].forEach(t => {
+    if (!touched(calc[t])) return;
+    const v = calcTotal(calc[t]);
+    $('pts' + t).value = v ? String(Math.abs(v)) : '';
+    $('sign' + t).setAttribute('aria-pressed', v < 0 ? 'true' : 'false');
+  });
   $('calc').hidden = true; $('addBtn').focus();
 };
 
