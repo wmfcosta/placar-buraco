@@ -80,15 +80,15 @@ function renderGame() {
   $('noGame').hidden = true; $('gameArea').hidden = false;
   const g = game, [ta, tb] = totals(), A = teamA(g), B = teamB(g);
   const lead = ta === tb ? null : (ta > tb ? 0 : 1);
-  const card = (names, score, i, color) => {
+  const card = (names, score, i) => {
     const pct = Math.max(0, Math.min(100, score / g.limite * 100)), need = g.limite - score;
     return `<div class="team${lead === i ? ' lead' : ''}">
-      <span class="names"><span class="dot" style="background:${color}"></span>${esc(label(names))}</span>
+      <span class="names">${esc(label(names))}</span>
       <span class="score num${score < 0 ? ' neg' : ''}">${fmt(score)}</span>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <span class="need num">${need > 0 ? 'Faltam ' + fmt(need) : 'Bateu o limite'}</span></div>`;
   };
-  $('board').innerHTML = card(A, ta, 0, 'var(--a)') + card(B, tb, 1, 'var(--b)') +
+  $('board').innerHTML = card(A, ta, 0) + card(B, tb, 1) +
     `<div class="meta num"><span>Limite: ${fmt(g.limite)} pontos</span><span>${rounds.length} rodada${rounds.length === 1 ? '' : 's'}</span></div>`;
   $('whoA').innerHTML = `<span class="dot" style="background:var(--a)"></span>${esc(label(A))}`;
   $('whoB').innerHTML = `<span class="dot" style="background:var(--b)"></span>${esc(label(B))}`;
