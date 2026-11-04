@@ -1,5 +1,5 @@
 // Guarda os arquivos do app para abrir mais rápido; os dados sempre vêm do Supabase.
-const CACHE = 'buraco-v1';
+const CACHE = 'buraco-v2';
 const FILES = ['/', '/index.html', '/style.css', '/app.js', '/config.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', e => {
