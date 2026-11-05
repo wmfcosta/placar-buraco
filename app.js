@@ -1,6 +1,17 @@
 (() => {
-const { supabaseUrl, supabaseKey } = window.BURACO_CONFIG;
-const sb = window.supabase.createClient(supabaseUrl, supabaseKey);
+// Todas as leituras e gravações passam pela API em /api/db, que conversa com o Neon.
+async function api(r, params) {
+  const res = await fetch('/api/db?' + new URLSearchParams({ r, ...(params || {}) }), { cache: 'no-store' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(body.erro || 'Erro ' + res.status); e.status = res.status; throw e; }
+  return body;
+}
+async function apiPost(acao, dados) {
+  const res = await fetch('/api/db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao, ...dados }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(body.erro || 'Erro ' + res.status); e.status = res.status; e.conflito = body.conflito; throw e; }
+  return body;
+}
 
 const $ = id => document.getElementById(id);
 const fmt = n => Number(n).toLocaleString('pt-BR');
@@ -16,7 +27,8 @@ const LS = {
 
 let game = null;      // linha da tabela partidas
 let rounds = [];      // rodadas da partida atual
-let channel = null;
+let poll = null;      // atualização periódica da partida aberta
+let lastVersion = null;
 let busy = false;
 
 /* ---------- utilidades ---------- */
@@ -25,7 +37,7 @@ function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 3200);
 }
-function fail(err, msg) { console.error(err); toast(msg || 'Sem conexão com o servidor. Tente de novo.'); }
+function fail(err, msg) { console.error(err); toast(err && err.status && err.status < 500 && err.message ? err.message : (msg || 'Sem conexão com o servidor. Tente de novo.')); }
 const teamA = g => [g.a1, g.a2];
 const teamB = g => [g.b1, g.b2];
 const totals = () => rounds.reduce((t, r) => [t[0] + r.pontos_a, t[1] + r.pontos_b], [0, 0]);
@@ -43,35 +55,46 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /* ---------- partida atual ---------- */
-async function openGame(id) {
-  const [p, r] = await Promise.all([
-    sb.from('partidas').select('*').eq('id', id).maybeSingle(),
-    sb.from('rodadas').select('*').eq('partida_id', id).order('numero')
-  ]);
-  if (p.error || r.error) return fail(p.error || r.error);
-  if (!p.data || p.data.status === 'cancelada') { LS.del('partidaId'); game = null; rounds = []; renderGame(); return; }
-  if (!game || game.id !== id) resetCalc();
-  game = p.data; rounds = r.data;
-  LS.set('partidaId', id);
-  subscribe(id);
+function setGame(data) {
+  if (!data.partida || data.partida.status === 'cancelada') { closeGame(); return; }
+  if (!game || game.id !== data.partida.id) resetCalc();
+  game = data.partida; rounds = data.rodadas; lastVersion = game.updated_at;
+  LS.set('partidaId', game.id);
+  watch(game.id);
   renderGame();
 }
-
-function subscribe(id) {
-  if (channel) sb.removeChannel(channel);
-  let t;
-  const refresh = () => { clearTimeout(t); t = setTimeout(() => { if (!busy && game && game.id === id) openGame(id); }, 250); };
-  channel = sb.channel('partida-' + id)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'rodadas', filter: 'partida_id=eq.' + id }, refresh)
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'partidas', filter: 'id=eq.' + id }, refresh)
-    .subscribe(status => { $('liveTag').classList.toggle('off', status !== 'SUBSCRIBED'); $('liveTag').textContent = status === 'SUBSCRIBED' ? 'ao vivo' : 'reconectando'; });
+function closeGame() {
+  clearInterval(poll); poll = null;
+  LS.del('partidaId'); game = null; rounds = []; lastVersion = null; renderGame();
 }
+async function openGame(id) {
+  try { setGame(await api('partida', { id })); }
+  catch (e) { if (e.status === 400) closeGame(); else fail(e); }
+}
+
+// Sem conexão permanente com o banco: o app pergunta a cada 3 segundos se a partida mudou
+// e só baixa as rodadas quando algo mudou. Pausa quando o app está em segundo plano.
+function setLive(ok) { $('liveTag').classList.toggle('off', !ok); $('liveTag').textContent = ok ? 'ao vivo' : 'reconectando'; }
+function watch(id) {
+  if (poll) return;
+  poll = setInterval(async () => {
+    if (busy || document.hidden || !game || game.id !== id) return;
+    try {
+      const v = await api('versao', { id });
+      setLive(true);
+      if (!v || v.status === 'cancelada') { closeGame(); toast('Esta partida foi cancelada em outro celular.'); return; }
+      if (v.updated_at !== lastVersion && !busy) setGame(await api('partida', { id }));
+    } catch (e) { setLive(false); }
+  }, 3000);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && game && !busy) openGame(game.id); });
 
 async function renderNoGame() {
   $('noGame').hidden = false; $('gameArea').hidden = true;
-  const { data, error } = await sb.from('partidas').select('*').eq('status', 'andamento').order('created_at', { ascending: false }).limit(10);
   const ul = $('openGames');
-  if (error) { ul.innerHTML = '<li class="empty">Não foi possível carregar as partidas.</li>'; return; }
+  let data;
+  try { data = await api('abertas'); }
+  catch (e) { ul.innerHTML = '<li class="empty">Não foi possível carregar as partidas.</li>'; return; }
   ul.innerHTML = data.length ? data.map(g => `<li><span class="m"><b>${esc(label(teamA(g)))} × ${esc(label(teamB(g)))}</b><span class="sub num">${fmt(g.placar_a)} × ${fmt(g.placar_b)} · limite ${fmt(g.limite)} · ${dateBR(g.created_at)}</span></span>
     <button data-open="${g.id}">Entrar</button></li>`).join('') : '<li class="empty">Nenhuma partida em andamento.</li>';
 }
@@ -118,16 +141,7 @@ function renderGame() {
   $('undoBtn').disabled = !rounds.length;
 }
 
-async function saveTotals() {
-  const [ta, tb] = totals(), g = game;
-  const ended = (ta >= g.limite || tb >= g.limite) && ta !== tb;
-  const patch = { placar_a: ta, placar_b: tb, status: ended ? 'encerrada' : 'andamento',
-    vencedor: ended ? (ta > tb ? 'A' : 'B') : null, finished_at: ended ? new Date().toISOString() : null };
-  const { data, error } = await sb.from('partidas').update(patch).eq('id', g.id).select().single();
-  if (error) throw error;
-  game = data;
-}
-
+// O servidor grava a rodada e recalcula o placar numa única operação.
 async function addRound() {
   if (busy || !game) return;
   const a = read('A'), b = read('B');
@@ -135,31 +149,22 @@ async function addRound() {
   busy = true; $('addBtn').disabled = true;
   try {
     const numero = (rounds.length ? rounds[rounds.length - 1].numero : 0) + 1;
-    const { data, error } = await sb.from('rodadas').insert({ partida_id: game.id, numero, pontos_a: a, pontos_b: b }).select().single();
-    if (error) {
-      if (error.code === '23505') { toast('Outro celular lançou esta rodada. O placar foi atualizado.'); busy = false; await openGame(game.id); return; }
-      throw error;
-    }
-    rounds.push(data);
+    const data = await apiPost('rodada', { partida_id: game.id, numero, pontos_a: a, pontos_b: b });
     ['A', 'B'].forEach(t => { $('pts' + t).value = ''; $('sign' + t).setAttribute('aria-pressed', 'false'); });
     resetCalc();
-    await saveTotals();
-    renderGame();
-  } catch (e) { fail(e, 'Não foi possível lançar a rodada. Confira a internet e tente de novo.'); }
+    setGame(data);
+  } catch (e) {
+    if (e.conflito) { toast(e.message); busy = false; await openGame(game.id); return; }
+    fail(e, 'Não foi possível lançar a rodada. Confira a internet e tente de novo.');
+  }
   finally { busy = false; $('addBtn').disabled = false; }
 }
 
 async function undo() {
   if (busy || !game || !rounds.length) return;
   busy = true;
-  try {
-    const last = rounds[rounds.length - 1];
-    const { error } = await sb.from('rodadas').delete().eq('id', last.id);
-    if (error) throw error;
-    rounds.pop();
-    await saveTotals();
-    renderGame();
-  } catch (e) { fail(e); }
+  try { setGame(await apiPost('desfazer', { partida_id: game.id })); }
+  catch (e) { fail(e); }
   finally { busy = false; }
 }
 
@@ -168,8 +173,9 @@ function read(t) { const v = parseInt($('pts' + t).value) || 0; return $('sign' 
 /* ---------- histórico ---------- */
 async function loadHistory() {
   const ul = $('historyList');
-  const { data, error } = await sb.from('partidas').select('*').neq('status', 'cancelada').order('created_at', { ascending: false }).limit(200);
-  if (error) { ul.innerHTML = '<li class="empty">Não foi possível carregar o histórico.</li>'; return; }
+  let data;
+  try { data = await api('historico'); }
+  catch (e) { ul.innerHTML = '<li class="empty">Não foi possível carregar o histórico.</li>'; return; }
   if (!data.length) { ul.innerHTML = '<li class="empty">Nenhuma partida salva ainda.</li>'; return; }
   ul.innerHTML = data.map(g => {
     const A = label(teamA(g)), B = label(teamB(g)), done = g.status === 'encerrada';
@@ -184,8 +190,9 @@ async function loadHistory() {
 /* ---------- ranking ---------- */
 const key = s => s.trim().toLocaleLowerCase('pt-BR');
 async function loadRanking() {
-  const { data, error } = await sb.from('partidas').select('a1,a2,b1,b2,vencedor').eq('status', 'encerrada').limit(5000);
-  if (error) { $('rankPlayers').innerHTML = '<tr><td class="empty">Não foi possível carregar o ranking.</td></tr>'; return; }
+  let data;
+  try { data = await api('ranking'); }
+  catch (e) { $('rankPlayers').innerHTML = '<tr><td class="empty">Não foi possível carregar o ranking.</td></tr>'; return; }
   const players = new Map(), pairs = new Map();
   const add = (map, k, name, won) => { const o = map.get(k) || { name, j: 0, v: 0 }; o.j++; if (won) o.v++; map.set(k, o); };
   data.forEach(g => {
@@ -227,10 +234,9 @@ document.querySelectorAll('.chips').forEach(box => {
 $('addBtn').onclick = addRound;
 $('undoBtn').onclick = () => ask('Desfazer a última rodada?', undo);
 $('cancelGame').onclick = () => ask('Cancelar esta partida? Ela sai do histórico e do ranking.', async () => {
-  const { error } = await sb.from('partidas').update({ status: 'cancelada' }).eq('id', game.id);
-  if (error) return fail(error);
-  if (channel) sb.removeChannel(channel);
-  LS.del('partidaId'); game = null; rounds = []; renderGame();
+  try { await apiPost('cancelar', { partida_id: game.id }); }
+  catch (e) { return fail(e); }
+  closeGame();
 });
 
 /* ---------- confirmação ---------- */
@@ -246,7 +252,8 @@ $('limitChips').onclick = e => { const b = e.target.closest('button'); if (b) se
 $('limit').addEventListener('input', e => { e.target.value = e.target.value.replace(/[^0-9]/g, ''); setLimit(e.target.value); });
 
 async function fillKnownPlayers() {
-  const { data } = await sb.from('partidas').select('a1,a2,b1,b2').order('created_at', { ascending: false }).limit(300);
+  let data = [];
+  try { data = await api('jogadores'); } catch (e) { return; }
   const seen = new Map();
   (data || []).forEach(g => [g.a1, g.a2, g.b1, g.b2].forEach(n => { const k = key(n); if (!seen.has(k)) seen.set(k, n.trim()); }));
   $('knownPlayers').innerHTML = [...seen.values()].map(n => `<option value="${esc(n)}">`).join('');
@@ -271,12 +278,13 @@ $('setupForm').addEventListener('submit', async e => {
   const v = id => $(id).value.trim();
   const row = { a1: v('a1'), a2: v('a2'), b1: v('b1'), b2: v('b2'), limite };
   $('startBtn').disabled = true;
-  const { data, error } = await sb.from('partidas').insert(row).select().single();
+  let data;
+  try { data = await apiPost('criar', row); }
+  catch (e) { $('startBtn').disabled = false; return fail(e, 'Não foi possível criar a partida. Confira a internet.'); }
   $('startBtn').disabled = false;
-  if (error) return fail(error, 'Não foi possível criar a partida. Confira a internet.');
   LS.set('ultimasDuplas', [[row.a1, row.a2], [row.b1, row.b2]]); LS.set('ultimoLimite', limite);
   $('setup').hidden = true;
-  await openGame(data.id);
+  setGame({ partida: data, rodadas: [] });
   location.hash = 'placar';
 });
 

@@ -9,8 +9,10 @@ App para marcar os pontos do jogo de baralho Buraco no celular (Android e iPhone
 
 ## Como funciona
 
-Site estático hospedado no Vercel, com os dados no Supabase (projeto `buraco`, tabelas `partidas` e `rodadas`).
-A chave em `config.js` é a chave pública do Supabase; o acesso é controlado pelas políticas RLS.
+Site estático hospedado no Vercel. Os dados ficam no Neon (projeto `buraco`, tabelas `partidas` e `rodadas`).
+O navegador nunca fala direto com o banco: tudo passa pela função `api/db.js`, que lê a conexão
+da variável de ambiente `DATABASE_URL` configurada no Vercel. O placar se atualiza entre celulares
+consultando a API a cada 3 segundos.
 
 ## Instalar no celular
 
@@ -20,5 +22,6 @@ A chave em `config.js` é a chave pública do Supabase; o acesso é controlado p
 ## Rodar localmente
 
 ```bash
-npx serve .
+npm install
+DATABASE_URL="postgresql://..." npx vercel dev
 ```
